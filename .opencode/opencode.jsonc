@@ -10,7 +10,12 @@
       "packages/opencode/migration/*": "deny",
     },
   },
-  "mcp": {},
+  "mcp": {
+    "deepwiki": {
+      "type": "remote",
+      "url": "https://mcp.deepwiki.com/mcp",
+    },
+  },
   "tools": {
     "github-triage": false,
     "github-pr-search": false,
