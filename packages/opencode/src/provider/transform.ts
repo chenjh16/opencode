@@ -909,7 +909,8 @@ export namespace ProviderTransform {
     return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
   }
 
-  export function schema(model: Provider.Model, schema: JSONSchema.BaseSchema | JSONSchema7): JSONSchema7 {
+  export function schema(model: Provider.Model, raw: JSONSchema.BaseSchema | JSONSchema7): JSONSchema7 {
+    let { $schema: _, ...schema } = raw as any
     /*
     if (["openai", "azure"].includes(providerID)) {
       if (schema.type === "object" && schema.properties) {

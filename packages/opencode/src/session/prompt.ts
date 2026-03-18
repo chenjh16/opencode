@@ -48,6 +48,7 @@ import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
+import { ClaudeTools } from "@/tool/claude-tools"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -793,13 +794,20 @@ export namespace SessionPrompt {
       { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
       input.agent,
     )) {
-      const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-      tools[item.id] = tool({
-        id: item.id as any,
-        description: item.description,
+      const claude = ClaudeTools.enabled() ? ClaudeTools.override(item.id) : undefined
+      const id = claude ? claude.name : item.id
+      const desc = claude ? claude.description : item.description
+      const schema = claude
+        ? (claude.parameters as any)
+        : ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
+
+      tools[id] = tool({
+        id: id as any,
+        description: desc,
         inputSchema: jsonSchema(schema as any),
         async execute(args, options) {
-          const ctx = context(args, options)
+          const mapped = claude ? ClaudeTools.mapArgs(item.id, args as Record<string, unknown>) : args
+          const ctx = context(mapped, options)
           await Plugin.trigger(
             "tool.execute.before",
             {
@@ -808,10 +816,10 @@ export namespace SessionPrompt {
               callID: ctx.callID,
             },
             {
-              args,
+              args: mapped,
             },
           )
-          const result = await item.execute(args, ctx)
+          const result = await item.execute(mapped, ctx)
           const output = {
             ...result,
             attachments: result.attachments?.map((attachment) => ({
@@ -827,7 +835,7 @@ export namespace SessionPrompt {
               tool: item.id,
               sessionID: ctx.sessionID,
               callID: ctx.callID,
-              args,
+              args: mapped,
             },
             output,
           )
