@@ -59,6 +59,7 @@ console.log(`Loaded ${migrations.length} migrations`)
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
 const skipInstall = process.argv.includes("--skip-install")
+const targetsArg = process.argv.find((a) => a.startsWith("--targets="))
 
 const allTargets: {
   os: string
@@ -123,26 +124,27 @@ const allTargets: {
   },
 ]
 
-const targets = singleFlag
-  ? allTargets.filter((item) => {
-      if (item.os !== process.platform || item.arch !== process.arch) {
-        return false
-      }
-
-      // When building for the current platform, prefer a single native binary by default.
-      // Baseline binaries require additional Bun artifacts and can be flaky to download.
-      if (item.avx2 === false) {
-        return baselineFlag
-      }
-
-      // also skip abi-specific builds for the same reason
-      if (item.abi !== undefined) {
-        return false
-      }
-
+function selectTargets() {
+  if (targetsArg) {
+    const wanted = new Set(targetsArg.slice("--targets=".length).split(","))
+    return allTargets.filter((item) => {
+      if (item.avx2 === false || item.abi !== undefined) return false
+      const label = `${item.os === "win32" ? "windows" : item.os}-${item.arch}`
+      return wanted.has(label)
+    })
+  }
+  if (singleFlag) {
+    return allTargets.filter((item) => {
+      if (item.os !== process.platform || item.arch !== process.arch) return false
+      if (item.avx2 === false) return baselineFlag
+      if (item.abi !== undefined) return false
       return true
     })
-  : allTargets
+  }
+  return allTargets
+}
+
+const targets = selectTargets()
 
 await $`rm -rf dist`
 
@@ -178,6 +180,7 @@ for (const item of targets) {
     conditions: ["browser"],
     tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
+    minify: true,
     compile: {
       autoloadBunfig: false,
       autoloadDotenv: false,

@@ -68,8 +68,13 @@ let cli = yargs(hideBin(process.argv))
     describe: "use Claude Code compatible tool definitions",
     type: "boolean",
   })
+  .option("log-toolcall", {
+    describe: "log tool call parse results to .opencode/logs/toolcall/",
+    type: "boolean",
+  })
   .middleware(async (opts) => {
     if (opts.claudeTools) process.env.OPENCODE_CLAUDE_TOOLS = "1"
+    if (opts.logToolcall) process.env.OPENCODE_LOG_TOOLCALL = "1"
     await Log.init({
       print: process.argv.includes("--print-logs"),
       dev: Installation.isLocal(),

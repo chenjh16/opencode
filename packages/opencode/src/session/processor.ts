@@ -16,6 +16,7 @@ import { PermissionNext } from "@/permission"
 import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
+import { ToolCallLog } from "./toolcall-log"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -196,6 +197,14 @@ export namespace SessionProcessor {
                         attachments: value.output.attachments,
                       },
                     })
+                    await ToolCallLog.finalize({
+                      sessionID: input.sessionID,
+                      toolCallId: value.toolCallId,
+                      toolName: match.tool,
+                      input: JSON.stringify(value.input ?? match.state.input),
+                      status: "completed",
+                      duration: Date.now() - match.state.time.start,
+                    })
 
                     delete toolcalls[value.toolCallId]
                   }
@@ -216,6 +225,15 @@ export namespace SessionProcessor {
                           end: Date.now(),
                         },
                       },
+                    })
+                    await ToolCallLog.finalize({
+                      sessionID: input.sessionID,
+                      toolCallId: value.toolCallId,
+                      toolName: match.tool,
+                      input: JSON.stringify(value.input ?? match.state.input),
+                      status: "error",
+                      duration: Date.now() - match.state.time.start,
+                      error: (value.error as any).toString(),
                     })
 
                     if (

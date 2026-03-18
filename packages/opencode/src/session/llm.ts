@@ -12,6 +12,8 @@ import {
   jsonSchema,
 } from "ai"
 import { mergeDeep, pipe } from "remeda"
+import { jsonrepair } from "jsonrepair"
+import { ToolCallLog } from "./toolcall-log"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
@@ -178,6 +180,9 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
+        ToolCallLog.repair(failed.toolCall, failed.error.message)
+        let fixed = { ...failed.toolCall }
+        let method: string | undefined
         if (ClaudeTools.enabled()) {
           const resolved = ClaudeTools.resolveToolName(failed.toolCall.toolName)
           if (resolved) {
@@ -187,21 +192,42 @@ export namespace LLM {
                 tool: failed.toolCall.toolName,
                 repaired: ov.name,
               })
-              return { ...failed.toolCall, toolName: ov.name }
+              fixed.toolName = ov.name
+              method = "claude-tools-name"
             }
           }
         }
-        const lower = failed.toolCall.toolName.toLowerCase()
-        if (lower !== failed.toolCall.toolName && tools[lower]) {
-          l.info("repairing tool call", {
-            tool: failed.toolCall.toolName,
-            repaired: lower,
-          })
-          return {
-            ...failed.toolCall,
-            toolName: lower,
+        if (!method) {
+          const lower = failed.toolCall.toolName.toLowerCase()
+          if (lower !== failed.toolCall.toolName && tools[lower]) {
+            l.info("repairing tool call", {
+              tool: failed.toolCall.toolName,
+              repaired: lower,
+            })
+            fixed.toolName = lower
+            method = "lowercase"
           }
         }
+        try {
+          const repaired = jsonrepair(fixed.input)
+          if (repaired !== fixed.input) {
+            l.info("repaired tool call JSON", {
+              tool: fixed.toolName,
+              error: failed.error.message,
+            })
+            fixed.input = repaired
+            method = method ? method + "+jsonrepair" : "jsonrepair"
+          }
+        } catch {}
+        if (method) {
+          ToolCallLog.repaired(failed.toolCall.toolCallId, fixed.input, method)
+          return fixed
+        }
+        await ToolCallLog.fail({
+          sessionID: input.sessionID,
+          toolCall: failed.toolCall,
+          error: failed.error.message,
+        })
         return {
           ...failed.toolCall,
           input: JSON.stringify({
