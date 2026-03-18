@@ -28,3 +28,11 @@ opencode-dev
 logs/
 *.bun-build
 tsconfig.tsbuildinfo
+
+.opencode/
+.coreview/
+.cursor/
+docs/
+docs/extra/
+Makefile
+packages/opencode/script/mock-llm-server.ts
