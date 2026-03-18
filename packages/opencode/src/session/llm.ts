@@ -22,6 +22,7 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission"
 import { Auth } from "@/auth"
+import { ClaudeTools } from "@/tool/claude-tools"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -177,6 +178,19 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
+        if (ClaudeTools.enabled()) {
+          const resolved = ClaudeTools.resolveToolName(failed.toolCall.toolName)
+          if (resolved) {
+            const ov = ClaudeTools.override(resolved)
+            if (ov && tools[ov.name]) {
+              l.info("repairing tool call via claude-tools", {
+                tool: failed.toolCall.toolName,
+                repaired: ov.name,
+              })
+              return { ...failed.toolCall, toolName: ov.name }
+            }
+          }
+        }
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
