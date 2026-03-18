@@ -64,7 +64,12 @@ let cli = yargs(hideBin(process.argv))
     type: "string",
     choices: ["DEBUG", "INFO", "WARN", "ERROR"],
   })
+  .option("claude-tools", {
+    describe: "use Claude Code compatible tool definitions",
+    type: "boolean",
+  })
   .middleware(async (opts) => {
+    if (opts.claudeTools) process.env.OPENCODE_CLAUDE_TOOLS = "1"
     await Log.init({
       print: process.argv.includes("--print-logs"),
       dev: Installation.isLocal(),
