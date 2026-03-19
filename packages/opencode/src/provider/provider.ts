@@ -18,6 +18,7 @@ import { iife } from "@/util/iife"
 import { Global } from "../global"
 import path from "path"
 import { Filesystem } from "../util/filesystem"
+import { MessageLog } from "../session/message-log"
 
 // Direct imports for bundled providers
 import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
@@ -99,6 +100,34 @@ export namespace Provider {
       },
     })
 
+    return new Response(body, {
+      headers: new Headers(res.headers),
+      status: res.status,
+      statusText: res.statusText,
+    })
+  }
+
+  function wrapResponseLog(res: Response, url: string) {
+    if (!res.body) return res
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    const chunks: string[] = []
+    const body = new ReadableStream<Uint8Array>({
+      async pull(ctrl) {
+        const part = await reader.read()
+        if (part.done) {
+          ctrl.close()
+          MessageLog.response(url, res.status, chunks)
+          return
+        }
+        chunks.push(decoder.decode(part.value, { stream: true }))
+        ctrl.enqueue(part.value)
+      },
+      async cancel(reason) {
+        MessageLog.response(url, res.status, chunks)
+        await reader.cancel(reason)
+      },
+    })
     return new Response(body, {
       headers: new Headers(res.headers),
       status: res.status,
@@ -1221,14 +1250,22 @@ export namespace Provider {
           }
         }
 
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+        if (MessageLog.enabled() && opts.body && opts.method === "POST") {
+          MessageLog.request(url, opts.body as string)
+        }
+
         const res = await fetchFn(input, {
           ...opts,
           // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
           timeout: false,
         })
 
-        if (!chunkAbortCtl) return res
-        return wrapSSE(res, chunkTimeout, chunkAbortCtl)
+        const wrapped = !chunkAbortCtl ? res : wrapSSE(res, chunkTimeout, chunkAbortCtl)
+        if (MessageLog.enabled() && res.body) {
+          return wrapResponseLog(wrapped, url)
+        }
+        return wrapped
       }
 
       const bundledFn = BUNDLED_PROVIDERS[model.api.npm]

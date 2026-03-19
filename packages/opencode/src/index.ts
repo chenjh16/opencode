@@ -72,9 +72,14 @@ let cli = yargs(hideBin(process.argv))
     describe: "log tool call parse results to .opencode/logs/toolcall/",
     type: "boolean",
   })
+  .option("log-messages", {
+    describe: "log all LLM API requests and responses to .opencode/logs/messages/",
+    type: "boolean",
+  })
   .middleware(async (opts) => {
     if (opts.claudeTools) process.env.OPENCODE_CLAUDE_TOOLS = "1"
     if (opts.logToolcall) process.env.OPENCODE_LOG_TOOLCALL = "1"
+    if (opts.logMessages) process.env.OPENCODE_LOG_MESSAGES = "1"
     await Log.init({
       print: process.argv.includes("--print-logs"),
       dev: Installation.isLocal(),

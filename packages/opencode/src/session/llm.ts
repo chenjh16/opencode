@@ -13,6 +13,103 @@ import {
 } from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { jsonrepair } from "jsonrepair"
+
+interface SanitizeResult {
+  output: string
+  actions: string[]
+}
+
+function sanitize(s: string): SanitizeResult {
+  const actions: string[] = []
+  let result = ""
+  let i = 0
+  while (i < s.length) {
+    const c = s.charCodeAt(i)
+    if (c <= 0x08 || c === 0x0b || (c >= 0x0e && c <= 0x1f)) {
+      if (!actions.includes("strip-control-char")) actions.push("strip-control-char")
+      i++
+      continue
+    }
+    if (s[i] === '"') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '"') {
+        if (s[j] === "\\") j++
+        j++
+      }
+      if (j < s.length) {
+        result += s.slice(i, j + 1)
+        i = j + 1
+        let k = i
+        while (k < s.length && " \t\n\r".includes(s[k])) k++
+        if (k < s.length && s[k] === "{" && !result.trimEnd().endsWith(":")) {
+          const block = extractBlock(s, k)
+          if (block && isDuplicate(result, block.content)) {
+            actions.push("remove-duplicate")
+            i = block.end
+            continue
+          }
+          actions.push("insert-comma")
+          result += ", "
+          i = k + 1
+          continue
+        }
+        continue
+      }
+    }
+    if (s[i] === "}") {
+      result += s[i]
+      i++
+      let k = i
+      while (k < s.length && " \t\n\r".includes(s[k])) k++
+      if (k < s.length && s[k] === "{") {
+        const block = extractBlock(s, k)
+        if (block && isDuplicate(result, block.content)) {
+          actions.push("remove-duplicate")
+          i = block.end
+          continue
+        }
+        actions.push("insert-comma")
+        result += ", "
+        i = k + 1
+        continue
+      }
+      continue
+    }
+    result += s[i]
+    i++
+  }
+  return { output: result, actions }
+}
+
+function extractBlock(s: string, start: number) {
+  let depth = 0
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '"') {
+      i++
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\") i++
+        i++
+      }
+      continue
+    }
+    if (s[i] === "{") depth++
+    if (s[i] === "}") {
+      depth--
+      if (depth === 0) return { content: s.slice(start + 1, i), end: i + 1 }
+    }
+  }
+  return null
+}
+
+function normalize(s: string) {
+  return s.replace(/\s+/g, "")
+}
+
+function isDuplicate(existing: string, block: string) {
+  const norm = normalize(existing)
+  const pairs = block.split(",").map((p) => p.trim())
+  return pairs.every((p) => p && (existing.includes(p) || norm.includes(normalize(p))))
+}
 import { ToolCallLog } from "./toolcall-log"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
@@ -179,24 +276,26 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
-        ToolCallLog.repair(failed.toolCall, failed.error.message)
+        const schema = ToolCallLog.schema(failed.toolCall.toolName, tools)
+        ToolCallLog.repair(failed.toolCall, failed.error.message, schema)
         let fixed = { ...failed.toolCall }
-        let method: string | undefined
+        let renamed: string | undefined
+        let jsonFixed = false
         if (ClaudeTools.enabled()) {
           const resolved = ClaudeTools.resolveToolName(failed.toolCall.toolName)
           if (resolved) {
             const ov = ClaudeTools.override(resolved)
-            if (ov && tools[ov.name]) {
+            if (ov && tools[ov.name] && ov.name !== failed.toolCall.toolName) {
               l.info("repairing tool call via claude-tools", {
                 tool: failed.toolCall.toolName,
                 repaired: ov.name,
               })
               fixed.toolName = ov.name
-              method = "claude-tools-name"
+              renamed = ov.name
             }
           }
         }
-        if (!method) {
+        if (!renamed) {
           const lower = failed.toolCall.toolName.toLowerCase()
           if (lower !== failed.toolCall.toolName && tools[lower]) {
             l.info("repairing tool call", {
@@ -204,29 +303,54 @@ export namespace LLM {
               repaired: lower,
             })
             fixed.toolName = lower
-            method = "lowercase"
+            renamed = lower
           }
         }
         try {
-          const repaired = jsonrepair(fixed.input)
+          const san = sanitize(fixed.input)
+          if (san.actions.length > 0) {
+            l.info("sanitized tool call input", {
+              tool: fixed.toolName,
+              actions: san.actions.join(","),
+            })
+            ToolCallLog.sanitized(failed.toolCall.toolCallId, san.output, san.actions)
+          }
+          let repaired = jsonrepair(san.output)
+          try {
+            repaired = JSON.stringify(JSON.parse(repaired))
+          } catch {}
           if (repaired !== fixed.input) {
             l.info("repaired tool call JSON", {
               tool: fixed.toolName,
               error: failed.error.message,
             })
             fixed.input = repaired
-            method = method ? method + "+jsonrepair" : "jsonrepair"
+            jsonFixed = true
           }
-        } catch {}
-        if (method) {
-          ToolCallLog.repaired(failed.toolCall.toolCallId, fixed.input, method)
+        } catch (e) {
+          const msg = String(e)
+          l.warn("jsonrepair failed", {
+            tool: fixed.toolName,
+            error: msg,
+            input: fixed.input.slice(0, 200),
+          })
+          ToolCallLog.jsonRepairFailed(failed.toolCall.toolCallId, msg)
+        }
+        if (renamed || jsonFixed) {
+          const method = [renamed ? "name" : "", jsonFixed ? "jsonrepair" : ""]
+            .filter(Boolean)
+            .join("+")
+          ToolCallLog.repaired(failed.toolCall.toolCallId, {
+            name: renamed,
+            input: jsonFixed ? fixed.input : undefined,
+            method,
+          })
+          if (renamed && !jsonFixed) {
+            const resolved = ToolCallLog.schema(fixed.toolName, tools)
+            if (resolved) ToolCallLog.updateSchema(failed.toolCall.toolCallId, resolved)
+          }
           return fixed
         }
-        await ToolCallLog.fail({
-          sessionID: input.sessionID,
-          toolCall: failed.toolCall,
-          error: failed.error.message,
-        })
         return {
           ...failed.toolCall,
           input: JSON.stringify({
@@ -316,4 +440,6 @@ export namespace LLM {
     }
     return false
   }
+
+  export const _test = { sanitize, isDuplicate, extractBlock, normalize }
 }
