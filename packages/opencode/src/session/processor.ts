@@ -432,6 +432,14 @@ export namespace SessionProcessor {
                   },
                 },
               })
+              await ToolCallLog.finalize({
+                sessionID: input.sessionID,
+                toolCallId: part.callID,
+                toolName: part.tool,
+                input: JSON.stringify(part.state.input),
+                status: "error",
+                error: "Tool execution aborted",
+              })
             }
           }
           input.assistantMessage.time.completed = Date.now()

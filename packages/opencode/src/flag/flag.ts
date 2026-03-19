@@ -41,6 +41,7 @@ export namespace Flag {
   export const OPENCODE_ENABLE_QUESTION_TOOL = truthy("OPENCODE_ENABLE_QUESTION_TOOL")
   export const OPENCODE_CLAUDE_TOOLS = truthy("OPENCODE_CLAUDE_TOOLS")
   export const OPENCODE_LOG_TOOLCALL = truthy("OPENCODE_LOG_TOOLCALL")
+  export const OPENCODE_LOG_MESSAGES = truthy("OPENCODE_LOG_MESSAGES")
 
   // Experimental
   export const OPENCODE_EXPERIMENTAL = truthy("OPENCODE_EXPERIMENTAL")
